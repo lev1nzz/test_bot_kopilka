@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+.env
+.venv
+env/
+
+# Database
+*.db
+*.sqlite
+*.db-journal
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Windows specific
+[Dd]esktop.ini
+Thumbs.db
+
+# Virtual environment
+venv/
+ENV/
+
+# Logs
+*.log
