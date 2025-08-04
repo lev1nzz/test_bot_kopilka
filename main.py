@@ -7,9 +7,17 @@ from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
+
+ADMINS = [1079919031]
+
+
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'savings_bot.db')
 
-# Инициализация базы данных
+
+def is_admin(user_id):
+    return user_id in ADMINS
+
+
 def init_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
@@ -80,7 +88,8 @@ def add_user(user_id, username, first_name, last_name):
         conn.commit()
     
     conn.close()
-
+    
+    
 # Команда /start
 def start(update: Update, context: CallbackContext):
     user = update.effective_user
@@ -90,7 +99,7 @@ def start(update: Update, context: CallbackContext):
         [KeyboardButton("👀 Мой баланс"), KeyboardButton("💰 Общий баланс")],
         [KeyboardButton("🎯 Внести в копилку"), KeyboardButton("💸 Мои взносы")],
         [KeyboardButton("🍪 Взять в долг"), KeyboardButton("🔔 Мои долги")],
-        [KeyboardButton("💪 Вернуть долг")]
+        [KeyboardButton("💪 Вернуть долг"), KeyboardButton(" 🔐 Админка")]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
@@ -352,6 +361,209 @@ def process_return(update: Update, user_id: int, text: str):
         print(f"Ошибка: {e}")
         update.message.reply_text("Некорректный формат сообщения. Пример: 'возвращаю 500 за 15.07'")
 
+
+def admin_panel(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        update.message.reply_text("🚫 У вас нет прав доступа к админ-панели")
+        return
+    
+    keyboard = [
+        [KeyboardButton("👥 Список пользователей")],
+        [KeyboardButton("📊 Изменить баланс"), KeyboardButton("📝 Изменить взнос")],
+        [KeyboardButton("📋 Список долгов"), KeyboardButton("✏️ Редактировать долг")],
+        [KeyboardButton("🔙 Назад")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    update.message.reply_text(
+        "👮‍♂️ Админ-панель:\n"
+        "Выберите действие:",
+        reply_markup=reply_markup
+    )
+
+def list_users(update: Update, context: CallbackContext):
+    if not is_admin(update.effective_user.id):
+        return
+    
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id, username, first_name, last_name, join_date FROM users')
+    users = cursor.fetchall()
+    conn.close()
+    
+    message = "👥 Список пользователей:\n\n"
+    for user_id, username, first_name, last_name, join_date in users:
+        balance = get_user_balance(user_id)
+        message += (
+            f"ID: {user_id}\n"
+            f"Имя: {first_name} {last_name}\n"
+            f"Юзернейм: @{username}\n"
+            f"Баланс: {balance:.2f}\n"
+            f"Дата регистрации: {join_date}\n\n"
+        )
+    
+    update.message.reply_text(message)
+
+def change_balance(update: Update, context: CallbackContext):
+    if not is_admin(update.effective_user.id):
+        return
+    
+    update.message.reply_text(
+        "Чтобы изменить баланс пользователя, отправьте сообщение в формате:\n"
+        "'баланс [ID пользователя] [новая сумма]'\n\n"
+        "Например: 'баланс 123456789 5000'"
+    )
+
+def process_balance_change(update: Update, context: CallbackContext):
+    if not is_admin(update.effective_user.id):
+        return
+    
+    try:
+        parts = update.message.text.split()
+        user_id = int(parts[1])
+        new_balance = float(parts[2])
+        
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE savings SET balance = ? WHERE user_id = ?', (new_balance, user_id))
+        conn.commit()
+        conn.close()
+        
+        update.message.reply_text(f"✅ Баланс пользователя {user_id} изменен на {new_balance:.2f}")
+    except (IndexError, ValueError) as e:
+        update.message.reply_text("❌ Ошибка формата. Пример: 'баланс 123456789 5000'")
+
+def change_contribution(update: Update, context: CallbackContext):
+    if not is_admin(update.effective_user.id):
+        return
+    
+    update.message.reply_text(
+        "Чтобы изменить ежемесячный взнос пользователя, отправьте сообщение в формате:\n"
+        "'взнос [ID пользователя] [новая сумма]'\n\n"
+        "Например: 'взнос 123456789 3000'"
+    )
+
+def process_contribution_change(update: Update, context: CallbackContext):
+    if not is_admin(update.effective_user.id):
+        return
+    
+    try:
+        parts = update.message.text.split()
+        user_id = int(parts[1])
+        new_contribution = float(parts[2])
+        
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE savings SET monthly_contribution = ? WHERE user_id = ?', (new_contribution, user_id))
+        conn.commit()
+        conn.close()
+        
+        update.message.reply_text(f"✅ Взнос пользователя {user_id} изменен на {new_contribution:.2f}")
+    except (IndexError, ValueError) as e:
+        update.message.reply_text("❌ Ошибка формата. Пример: 'взнос 123456789 3000'")
+
+def list_debts(update: Update, context: CallbackContext):
+    if not is_admin(update.effective_user.id):
+        return
+    
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('''
+    SELECT d.debt_id, d.user_id, u.first_name, u.last_name, d.amount, d.due_date, d.status 
+    FROM debts d
+    JOIN users u ON d.user_id = u.user_id
+    ORDER BY d.status, d.due_date
+    ''')
+    
+    debts = cursor.fetchall()
+    conn.close()
+    
+    if not debts:
+        update.message.reply_text("Нет активных долгов.")
+        return
+    
+    message = "📋 Список всех долгов:\n\n"
+    for debt_id, user_id, first_name, last_name, amount, due_date, status in debts:
+        message += (
+            f"ID долга: {debt_id}\n"
+            f"Пользователь: {first_name} {last_name} (ID: {user_id})\n"
+            f"Сумма: {amount:.2f}\n"
+            f"Дата возврата: {due_date}\n"
+            f"Статус: {'✅ Погашен' if status == 'returned' else '⚠️ Активен'}\n\n"
+        )
+    
+    update.message.reply_text(message)
+
+def edit_debt(update: Update, context: CallbackContext):
+    if not is_admin(update.effective_user.id):
+        return
+    
+    update.message.reply_text(
+        "Редактирование долга:\n"
+        "1. Чтобы закрыть долг, отправьте 'закрыть [ID долга]'\n"
+        "2. Чтобы изменить сумму, отправьте 'долг [ID долга] [новая сумма]'\n"
+        "3. Чтобы изменить дату, отправьте 'дата [ID долга] [новая дата в формате дд.мм]'\n\n"
+        "Примеры:\n"
+        "'закрыть 1'\n"
+        "'долг 1 1500'\n"
+        "'дата 1 30.12'"
+    )
+
+def process_debt_edit(update: Update, context: CallbackContext):
+    if not is_admin(update.effective_user.id):
+        return
+    
+    try:
+        text = update.message.text.lower()
+        parts = text.split()
+        action = parts[0]
+        debt_id = int(parts[1])
+        
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        cursor = conn.cursor()
+        
+        if action == 'закрыть':
+            cursor.execute('UPDATE debts SET status = "returned" WHERE debt_id = ?', (debt_id,))
+            conn.commit()
+            update.message.reply_text(f"✅ Долг {debt_id} помечен как погашенный")
+            
+        elif action == 'долг':
+            new_amount = float(parts[2])
+            cursor.execute('UPDATE debts SET amount = ? WHERE debt_id = ?', (new_amount, debt_id))
+            conn.commit()
+            update.message.reply_text(f"✅ Сумма долга {debt_id} изменена на {new_amount:.2f}")
+            
+        elif action == 'дата':
+            new_date = parts[2]
+            day, month = map(int, new_date.split('.'))
+            if not (1 <= day <= 31 and 1 <= month <= 12):
+                raise ValueError("Некорректная дата")
+            cursor.execute('UPDATE debts SET due_date = ? WHERE debt_id = ?', (new_date, debt_id))
+            conn.commit()
+            update.message.reply_text(f"✅ Дата долга {debt_id} изменена на {new_date}")
+            
+        conn.close()
+        
+    except (IndexError, ValueError) as e:
+        update.message.reply_text("❌ Ошибка формата. Примеры:\n'закрыть 1'\n'долг 1 1500'\n'дата 1 30.12'")
+
+def back_to_main(update: Update, context: CallbackContext):
+    user = update.effective_user
+    keyboard = [
+        [KeyboardButton("👀 Мой баланс"), KeyboardButton("💰 Общий баланс")],
+        [KeyboardButton("🎯 Внести в копилку"), KeyboardButton("💸 Мои взносы")],
+        [KeyboardButton("🍪 Взять в долг"), KeyboardButton("🔔 Мои долги")],
+        [KeyboardButton("💪 Вернуть долг"), KeyboardButton("🔐 Админка")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    update.message.reply_text(
+        f"Главное меню, {user.first_name}!",
+        reply_markup=reply_markup
+    )
+
+
 # Обработка текстовых сообщений
 def handle_text(update: Update, context: CallbackContext):
     text = update.message.text.lower()
@@ -363,26 +575,65 @@ def handle_text(update: Update, context: CallbackContext):
         process_return(update, user_id, text)
     elif text.startswith('вношу') or text.startswith('установить взнос'):
         process_contribution(update, user_id, text)
-
+    elif is_admin(user_id):
+        if text == '👥 список пользователей':
+            list_users(update, context)
+        elif text == '📊 изменить баланс':
+            change_balance(update, context)
+        elif text == '📝 изменить взнос':
+            change_contribution(update, context)
+        elif text == '📋 список долгов':
+            list_debts(update, context)
+        elif text == '✏️ редактировать долг':
+            edit_debt(update, context)
+        elif text == '🔙 назад':
+            back_to_main(update, context)
+            
+            
 def main():
     init_db()
+
     
-    # Укажите ваш токен бота
     TOKEN = os.environ.get('BOT_TOKEN')
-    updater = Updater(TOKEN, use_context=True)
+    if not TOKEN:
+        print("Ошибка: не указан токен бота в переменных окружения")
+        return
     
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.regex('^👀 Мой баланс$'), my_balance))
-    dp.add_handler(MessageHandler(Filters.regex('^💰 Общий баланс$'), total_balance))
-    dp.add_handler(MessageHandler(Filters.regex('^🎯 Внести в копилку$'), add_contribution))
-    dp.add_handler(MessageHandler(Filters.regex('^💸 Мои взносы$'), my_contributions))
-    dp.add_handler(MessageHandler(Filters.regex('^🍪 Взять в долг$'), borrow_money))
-    dp.add_handler(MessageHandler(Filters.regex('^💪 Вернуть долг$'), return_debt))
-    dp.add_handler(MessageHandler(Filters.regex('^🔔 Мои долги$'), my_debts))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
+    updater = Updater(TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
+    
+    # Основные команды
+    dispatcher.add_handler(CommandHandler("start", start))
+    
+    # Обработчики кнопок
+    dispatcher.add_handler(MessageHandler(Filters.regex('^👀 Мой баланс$'), my_balance))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^💰 Общий баланс$'), total_balance))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^🎯 Внести в копилку$'), add_contribution))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^💸 Мои взносы$'), my_contributions))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^🍪 Взять в долг$'), borrow_money))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^💪 Вернуть долг$'), return_debt))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^🔔 Мои долги$'), my_debts))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^🔐 Админка$'), admin_panel))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^👥 Список пользователей$'), list_users))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^📊 Изменить баланс$'), change_balance))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^📝 Изменить взнос$'), change_contribution))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^📋 Список долгов$'), list_debts))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^✏️ Редактировать долг$'), edit_debt))
+    dispatcher.add_handler(MessageHandler(Filters.regex('^🔙 Назад$'), back_to_main))
+    
+    # Обработчики команд админ-панели
+    dispatcher.add_handler(CommandHandler("balance", process_balance_change))
+    dispatcher.add_handler(CommandHandler("vznos", process_contribution_change))
+    dispatcher.add_handler(CommandHandler("zakrit", process_debt_edit))
+    dispatcher.add_handler(CommandHandler("dolg", process_debt_edit))
+    dispatcher.add_handler(CommandHandler("data", process_debt_edit))
+    
+    # Обработчик текстовых сообщений
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
     
     updater.start_polling()
     updater.idle()
 
+
 if __name__ == '__main__':
-    main()
+    main()           
