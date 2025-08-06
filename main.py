@@ -515,38 +515,64 @@ def process_debt_edit(update: Update, context: CallbackContext):
         return
     
     try:
-        text = update.message.text.lower()
+        text = update.message.text.lower().strip()
         parts = text.split()
+        if len(parts) < 2:
+            raise ValueError("Недостаточно аргументов")
+            
         action = parts[0]
         debt_id = int(parts[1])
         
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        cursor = conn.cursor()
-        
-        if action == 'закрыть':
-            cursor.execute('UPDATE debts SET status = "returned" WHERE debt_id = ?', (debt_id,))
-            conn.commit()
-            update.message.reply_text(f"✅ Долг {debt_id} помечен как погашенный")
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+            cursor = conn.cursor()
             
-        elif action == 'долг':
-            new_amount = float(parts[2])
-            cursor.execute('UPDATE debts SET amount = ? WHERE debt_id = ?', (new_amount, debt_id))
-            conn.commit()
-            update.message.reply_text(f"✅ Сумма долга {debt_id} изменена на {new_amount:.2f}")
-            
-        elif action == 'дата':
-            new_date = parts[2]
-            day, month = map(int, new_date.split('.'))
-            if not (1 <= day <= 31 and 1 <= month <= 12):
-                raise ValueError("Некорректная дата")
-            cursor.execute('UPDATE debts SET due_date = ? WHERE debt_id = ?', (new_date, debt_id))
-            conn.commit()
-            update.message.reply_text(f"✅ Дата долга {debt_id} изменена на {new_date}")
-            
-        conn.close()
-        
+            # Проверка существования долга
+            cursor.execute('SELECT 1 FROM debts WHERE debt_id = ?', (debt_id,))
+            if not cursor.fetchone():
+                update.message.reply_text(f"❌ Долг с ID {debt_id} не найден")
+                return
+
+            if action == 'закрыть':
+                cursor.execute('UPDATE debts SET status = "returned" WHERE debt_id = ?', (debt_id,))
+                conn.commit()
+                update.message.reply_text(f"✅ Долг {debt_id} помечен как погашенный")
+                
+            elif action == 'долг':
+                if len(parts) < 3:
+                    raise ValueError("Не указана сумма")
+                new_amount = float(parts[2])
+                cursor.execute('UPDATE debts SET amount = ? WHERE debt_id = ?', (new_amount, debt_id))
+                conn.commit()
+                update.message.reply_text(f"✅ Сумма долга {debt_id} изменена на {new_amount:.2f}")
+                
+            elif action == 'дата':
+                if len(parts) < 3:
+                    raise ValueError("Не указана дата")
+                new_date = parts[2]
+                try:
+                    day, month = map(int, new_date.split('.'))
+                    if not (1 <= day <= 31 and 1 <= month <= 12):
+                        raise ValueError("Некорректная дата")
+                except:
+                    raise ValueError("Формат даты должен быть ДД.ММ (например 30.12)")
+                
+                cursor.execute('UPDATE debts SET due_date = ? WHERE debt_id = ?', (new_date, debt_id))
+                conn.commit()
+                update.message.reply_text(f"✅ Дата долга {debt_id} изменена на {new_date}")
+                
+            else:
+                update.message.reply_text("❌ Неизвестная команда. Используйте: закрыть, долг или дата")
+                
+        except sqlite3.Error as e:
+            update.message.reply_text(f"❌ Ошибка базы данных: {str(e)}")
+        finally:
+            if conn:
+                conn.close()
+                
     except (IndexError, ValueError) as e:
-        update.message.reply_text("❌ Ошибка формата. Примеры:\n'закрыть 1'\n'долг 1 1500'\n'дата 1 30.12'")
+        update.message.reply_text(f"❌ Ошибка: {str(e)}\nПримеры:\n'закрыть 1'\n'долг 1 1500'\n'дата 1 30.12'")
 
 def back_to_main(update: Update, context: CallbackContext):
     user = update.effective_user
@@ -569,6 +595,24 @@ def handle_text(update: Update, context: CallbackContext):
     text = update.message.text.lower()
     user_id = update.effective_user.id
     
+    if is_admin(user_id):
+        if text.startswith(('закрыть ', 'долг ', 'дата ')):
+            process_debt_edit(update, context)
+            return
+        
+        
+    if is_admin(user_id):
+        if text.startswith(('баланс')):
+            process_balance_change(update, context)
+            return
+    
+    
+    if is_admin(user_id):
+        if text.startswith(('взнос')):
+            process_contribution_change(update, context)
+            return
+    
+    
     if text.startswith('беру') and 'до' in text:
         process_borrow(update, user_id, text)
     elif text.startswith('возвращаю') and 'за' in text:
@@ -588,6 +632,8 @@ def handle_text(update: Update, context: CallbackContext):
             edit_debt(update, context)
         elif text == '🔙 назад':
             back_to_main(update, context)
+    else:
+        update.message.reply_text("❌ Неизвестная команда")
             
             
 def main():
