@@ -36,6 +36,7 @@ def init_db():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS savings (
         user_id INTEGER PRIMARY KEY,
+        username TEXT,
         balance REAL DEFAULT 0,
         monthly_contribution REAL DEFAULT 0,
         FOREIGN KEY (user_id) REFERENCES users(user_id)
@@ -46,6 +47,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS debts (
         debt_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
+        username TEXT,
         amount REAL,
         due_date TEXT,
         status TEXT DEFAULT 'active',
@@ -58,6 +60,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS contributions (
         contribution_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
+        username TEXT,
         amount REAL,
         month_year TEXT,
         contribution_date TEXT,
@@ -81,9 +84,9 @@ def add_user(user_id, username, first_name, last_name):
         ''', (user_id, username, first_name, last_name, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         
         cursor.execute('''
-        INSERT INTO savings (user_id, balance, monthly_contribution)
-        VALUES (?, 0, 0)
-        ''', (user_id,))
+        INSERT INTO savings (user_id, username, balance, monthly_contribution)
+        VALUES (?, ?, 0, 0)
+        ''', (user_id, username))
         
         conn.commit()
     
@@ -188,6 +191,14 @@ def my_contributions(update: Update, context: CallbackContext):
 
 def process_contribution(update: Update, user_id: int, text: str):
     try:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        cursor = conn.cursor()
+        
+         # Получаем username из таблицы users
+        cursor.execute('SELECT username FROM users WHERE user_id = ?', (user_id,))
+        user_data = cursor.fetchone()
+        username = user_data[0] if user_data else None
+        
         if text.startswith('установить взнос'):
             amount = float(text.split()[2])
             conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -210,9 +221,9 @@ def process_contribution(update: Update, user_id: int, text: str):
             cursor = conn.cursor()
             
             cursor.execute('''
-            INSERT INTO contributions (user_id, amount, month_year, contribution_date)
-            VALUES (?, ?, ?, ?)
-            ''', (user_id, amount, month_year, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+            INSERT INTO contributions (user_id, username, amount, month_year, contribution_date)
+            VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, username, amount, month_year, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
             
             cursor.execute('UPDATE savings SET balance = balance + ? WHERE user_id = ?', (amount, user_id))
             
@@ -294,10 +305,16 @@ def process_borrow(update: Update, user_id: int, text: str):
         conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         cursor = conn.cursor()
         
+        # Получаем username из таблицы users
+        cursor.execute('SELECT username FROM users WHERE user_id = ?', (user_id,))
+        user_data = cursor.fetchone()
+        username = user_data[0] if user_data else None
+        
+        
         cursor.execute('''
-        INSERT INTO debts (user_id, amount, due_date, creation_date)
-        VALUES (?, ?, ?, ?)
-        ''', (user_id, amount, due_date, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        INSERT INTO debts (user_id, username, amount, due_date, creation_date)
+        VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, username, amount, due_date, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         
         cursor.execute('UPDATE savings SET balance = balance - ? WHERE user_id = ?', (amount, user_id))
         
